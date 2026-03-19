@@ -1,0 +1,7 @@
+yfinance
+pandas
+numpy
+streamlit
+plotly
+ib_insync
+optuna
