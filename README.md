@@ -1,6 +1,6 @@
 # ETF Rotation Strategy
 
-基于动量的ETF板块轮动策略，支持A股和美股市场。
+基于动量的ETF板块轮动策略，支持A股、美股和港股市场。
 
 ## 策略概述
 
@@ -24,6 +24,12 @@
 - **夏普比率**: 1.66
 - **最大回撤**: -12.79%
 
+### 港股策略 (hk/)
+- **ETF池**: 15个主流板块ETF
+- **参数**: 待优化
+- **测试期**: 待回测
+- **状态**: 开发中
+
 ## 目录结构
 
 ```
@@ -39,6 +45,11 @@ etf-rotation-strategy/
 │   ├── broker/           # IBKR交易接口
 │   ├── optimize.py       # 参数优化
 │   └── run_live_scheduled.py # 实盘交易
+├── hk/                    # 港股策略
+│   ├── data/             # 数据获取和ETF池定义
+│   ├── engine/           # 回测引擎
+│   ├── broker/           # IBKR交易接口
+│   └── optimize.py       # 参数优化
 └── README.md
 ```
 
@@ -55,6 +66,12 @@ python optimize_astock.py
 **美股:**
 ```bash
 cd us
+python optimize.py
+```
+
+**港股:**
+```bash
+cd hk
 python optimize.py
 ```
 
