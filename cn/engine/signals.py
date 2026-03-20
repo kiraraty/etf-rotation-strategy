@@ -3,13 +3,23 @@
 from typing import Optional
 
 import pandas as pd
-import streamlit as st
+try:
+    import streamlit as st
+except ImportError:
+    # Mock streamlit for CLI headless mode
+    class MockStreamlit:
+        def progress(self, val, text=""): return self
+        def empty(self): pass
+        def error(self, text): print(f"ERROR: {text}")
+        def warning(self, text): print(f"WARNING: {text}")
+    st = MockStreamlit()
 
 from config import AppConfig, DEFAULT_CONFIG
 from data.etf_universe import get_etf_codes, get_etf_map, BENCHMARK_ETF
 from data.fetcher import fetch_etf_hist, fetch_benchmark, fetch_all_etf_hist
 from engine.indicators import calc_all_indicators
 from engine.scorer import score_cross_section
+from engine.macro_regime import MacroRegimeEngine
 
 
 def classify_signal(score: float, config: AppConfig = None) -> str:
@@ -45,11 +55,18 @@ def run_analysis(period: str = "daily",
 
     etf_map = get_etf_map()
 
-    # 1. 获取基准数据
+    # 1. 启动宏观引擎
+    macro_engine = MacroRegimeEngine()
+    
+    # 2. 获取基准数据
     bench_df = fetch_benchmark(period, days)
     if bench_df.empty:
         st.error("无法获取基准(沪深300ETF)数据")
         return {}
+
+    # 3. 抓取宏观数据 (注入基准行情)
+    macro_engine.fetch_data(days=days+100, benchmark_df=bench_df)
+    macro_engine.calculate_regimes()
 
     # 2. 批量获取ETF数据
     progress = st.progress(0, text="正在获取ETF数据...")
@@ -64,18 +81,18 @@ def run_analysis(period: str = "daily",
         st.error("未获取到任何ETF数据")
         return {}
 
-    # 3. 计算各ETF指标
+    # 4. 计算各ETF指标
     all_indicators = {}
     for code, hist_df in all_hist.items():
         indicators = calc_all_indicators(hist_df, bench_df)
         all_indicators[code] = indicators
 
-    # 4. 构建历史评分时间序列
-    score_history = _build_score_history(all_indicators, config)
+    # 5. 构建历史评分时间序列 (注入宏观)
+    score_history = _build_score_history(all_indicators, config, macro_engine)
 
-    # 5. 最新截面评分
+    # 6. 最新截面评分 (注入宏观)
     latest_scores = _build_latest_scores(
-        all_indicators, etf_map, config
+        all_indicators, etf_map, config, macro_engine=macro_engine
     )
 
     return {
@@ -84,11 +101,13 @@ def run_analysis(period: str = "daily",
         "all_indicators": all_indicators,
         "all_hist": all_hist,
         "benchmark": bench_df,
+        "macro_engine": macro_engine,
     }
 
 
 def _build_score_history(all_indicators: dict,
-                         config: AppConfig) -> pd.DataFrame:
+                         config: AppConfig,
+                         macro_engine: MacroRegimeEngine = None) -> pd.DataFrame:
     """构建历史评分时间序列
 
     对每个交易日做截面评分
@@ -117,7 +136,8 @@ def _build_score_history(all_indicators: dict,
         if len(cross_section) < 3:
             continue
         cs_df = pd.DataFrame(cross_section).T
-        day_scores = score_cross_section(cs_df, config.weights)
+        # 传入日期和宏观引擎
+        day_scores = score_cross_section(cs_df, config.weights, date=date, macro_engine=macro_engine)
         scores_dict[date] = day_scores
 
     if not scores_dict:
@@ -129,20 +149,25 @@ def _build_score_history(all_indicators: dict,
 def _build_latest_scores(all_indicators: dict,
                          etf_map: dict,
                          config: AppConfig,
-                         sentiment_scores: dict = None) -> pd.DataFrame:
+                         sentiment_scores: dict = None,
+                         macro_engine: MacroRegimeEngine = None) -> pd.DataFrame:
     """构建最新截面评分表"""
     # 取每只ETF最新一行指标
     latest = {}
+    latest_date = None
     for code, ind_df in all_indicators.items():
         valid = ind_df.dropna(how="all")
         if not valid.empty:
             latest[code] = valid.iloc[-1]
+            if latest_date is None or valid.index[-1] > latest_date:
+                latest_date = valid.index[-1]
 
     if not latest:
         return pd.DataFrame()
 
     cs_df = pd.DataFrame(latest).T
-    scores = score_cross_section(cs_df, config.weights, sentiment_scores)
+    # 传入日期和宏观引擎
+    scores = score_cross_section(cs_df, config.weights, sentiment_scores, date=latest_date, macro_engine=macro_engine)
 
     result = pd.DataFrame({
         "code": scores.index,

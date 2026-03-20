@@ -6,6 +6,9 @@ import pandas as pd
 from config import WeightConfig, DEFAULT_CONFIG
 
 
+from config import WeightConfig, DEFAULT_CONFIG
+from data.etf_universe import get_etf_map
+
 def rank_normalize(series: pd.Series) -> pd.Series:
     """截面排名归一化到 0~100"""
     ranked = series.rank(pct=True, na_option="bottom")
@@ -14,13 +17,17 @@ def rank_normalize(series: pd.Series) -> pd.Series:
 
 def score_cross_section(indicators: dict[str, pd.Series],
                         weights: WeightConfig = None,
-                        sentiment_scores: dict = None) -> pd.Series:
+                        sentiment_scores: dict = None,
+                        date: pd.Timestamp = None,
+                        macro_engine = None) -> pd.Series:
     """对单个截面（某一天）的所有ETF指标进行评分
 
     Args:
         indicators: DataFrame，columns=指标名, index=etf_code
         weights: 权重配置
         sentiment_scores: {etf_code: float} AI情绪评分(-100~100), 可选
+        date: 当前日期 (用于宏观判断)
+        macro_engine: MacroRegimeEngine 实例
 
     Returns:
         pd.Series: index=etf_code, value=综合评分(0~100)
@@ -33,27 +40,36 @@ def score_cross_section(indicators: dict[str, pd.Series],
 
     scored = pd.DataFrame(index=df.index)
 
-    # 正向指标：值越大越好 → 直接排名归一化
+    # 1. 技术指标评分 (0~100)
     for col in ["momentum_5d", "momentum_10d", "momentum_20d", "rps",
                 "money_flow", "breakout", "volume_confirm"]:
         if col in df.columns:
             scored[col] = rank_normalize(df[col])
 
-    # 反向指标：波动率越低越好 → 取反后排名
     if "volatility" in df.columns:
         scored["volatility"] = rank_normalize(-df["volatility"])
 
-    # AI情绪评分（辩论结果回灌）
+    # 2. AI情绪评分
     if "news_sentiment" in w and sentiment_scores:
         sentiment_series = pd.Series(
             {code: sentiment_scores.get(code, 0) for code in df.index}
         )
         scored["news_sentiment"] = rank_normalize(sentiment_series)
 
-    # 加权求和
+    # 3. 加权初始求和
     total = pd.Series(0.0, index=df.index)
     for col, weight in w.items():
         if col in scored.columns:
             total += scored[col].fillna(50) * weight
+
+    # 4. 注入宏观环境乘数 (非后验逻辑)
+    if date is not None and macro_engine is not None:
+        etf_map = get_etf_map()
+        for code in total.index:
+            info = etf_map.get(code)
+            if info:
+                # 获取该板块在当前宏观环境下的权重调节系数 (1.3x 或 0.7x)
+                multiplier = macro_engine.get_multiplier(date, info.sector)
+                total.loc[code] *= multiplier
 
     return total

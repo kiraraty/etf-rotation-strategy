@@ -7,7 +7,14 @@ import os
 import time
 
 import pandas as pd
-import streamlit as st
+try:
+    import streamlit as st
+except ImportError:
+    class MockStreamlit:
+        def cache_data(self, **kwargs):
+            return lambda x: x
+        def warning(self, text): print(f"WARNING: {text}")
+    st = MockStreamlit()
 
 from config import DEFAULT_CONFIG
 from data.cache import read_cache, write_cache

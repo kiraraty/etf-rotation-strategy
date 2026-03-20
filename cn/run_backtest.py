@@ -1,7 +1,8 @@
 """独立回测脚本：快速验证策略效果"""
 
 import sys
-sys.path.insert(0, '/Users/kirara/Desktop/astocketf')
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import DEFAULT_CONFIG
 from engine.signals import run_analysis

@@ -8,66 +8,70 @@ def run_backtest(score_history: pd.DataFrame,
                  all_hist: dict,
                  top_n: int = 3,
                  rebalance_days: int = 5,
-                 fee_rate: float = 0.001) -> dict:
-    """回测ETF轮动策略
+                 fee_rate: float = 0.00005,
+                 slippage: float = 0.001) -> dict:
+    """实盘模拟版回测
 
     Args:
-        score_history: 历史评分 (date x etf_code)
-        all_hist: {etf_code: hist_df} 历史价格数据
+        score_history: 历史评分 (T日评分决定T+1日开盘动作)
+        all_hist: 历史数据 (需包含 open, close)
         top_n: 持仓数量
-        rebalance_days: 调仓间隔（交易日）
-        fee_rate: 单边手续费率
-
-    Returns:
-        {
-            "daily_return": pd.Series,  # 每日收益率
-            "cumulative_return": float,  # 累计收益率
-            "sharpe_ratio": float,       # 夏普比率
-            "max_drawdown": float,       # 最大回撤
-            "win_rate": float,           # 胜率
-        }
+        rebalance_days: 调仓间隔
+        fee_rate: 真实费率 (如 0.00005)
+        slippage: 滑点 (0.001 代表单边 0.1% 的冲击成本)
     """
     dates = score_history.index
-    portfolio_value = 1.0  # 初始资金
+    portfolio_value = 1.0
     daily_values = []
-    holdings = {}  # {code: weight}
+    holdings = {} # {code: weight}
     last_rebalance = 0
 
     for i, date in enumerate(dates):
-        # 调仓逻辑:用前一天的评分决定今天的持仓(避免前瞻偏差)
+        # 调仓动作：基于 T-1 日的信号，在 T 日开盘执行
         if i > 0 and (i - last_rebalance >= rebalance_days):
-            # 用昨天的评分选出Top N
             prev_date = dates[i-1]
             day_scores = score_history.loc[prev_date].dropna().sort_values(ascending=False)
             new_holdings = {code: 1.0/top_n for code in day_scores.head(top_n).index}
 
-            # 计算换手率和手续费
-            if holdings:
-                turnover = sum(abs(new_holdings.get(c, 0) - holdings.get(c, 0))
-                             for c in set(new_holdings) | set(holdings))
-                portfolio_value *= (1 - turnover * fee_rate)
-
+            # 计算换手率
+            codes = set(new_holdings.keys()) | set(holdings.keys())
+            turnover = 0
+            for c in codes:
+                old_w = holdings.get(c, 0)
+                new_w = new_holdings.get(c, 0)
+                turnover += abs(new_w - old_w)
+            
+            # 扣除手续费 + 滑点 (非常重要！)
+            # 摩擦成本 = 换手率 * (手续费 + 滑点)
+            friction_cost = turnover * (fee_rate + slippage)
+            portfolio_value *= (1 - friction_cost)
+            
             holdings = new_holdings
             last_rebalance = i
+        
         elif i == 0:
-            # 首日:用首日评分建仓,但不计算首日收益(避免前瞻偏差)
+            # 初始建仓 (假设第一天按开盘价买入)
             day_scores = score_history.loc[date].dropna().sort_values(ascending=False)
             holdings = {code: 1.0/top_n for code in day_scores.head(top_n).index}
-            last_rebalance = 0
+            portfolio_value *= (1 - (fee_rate + slippage))
             daily_values.append(portfolio_value)
             continue
 
-        # 计算当日收益
+        # 计算当日收益 (按当日收盘/前日收盘计算)
         day_return = 0
         for code, weight in holdings.items():
             if code in all_hist and date in all_hist[code].index:
-                price_df = all_hist[code]
-                if i > 0 and dates[i-1] in price_df.index:
-                    ret = price_df.loc[date, 'close'] / price_df.loc[dates[i-1], 'close'] - 1
+                df = all_hist[code]
+                idx = df.index.get_loc(date)
+                if idx > 0:
+                    # 使用收盘价变动计算当日损益
+                    ret = df.iloc[idx]['close'] / df.iloc[idx-1]['close'] - 1
                     day_return += weight * ret
 
         portfolio_value *= (1 + day_return)
         daily_values.append(portfolio_value)
+
+    # ... 后续指标计算逻辑保持不变 ...
 
     # 计算指标
     daily_returns = pd.Series(daily_values).pct_change().dropna()

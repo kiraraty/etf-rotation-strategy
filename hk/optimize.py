@@ -13,7 +13,7 @@ all_hist = {}
 for code in etf_codes:
     try:
         safe_code = code.replace(".", "_")
-        df = pd.read_parquet(f'.cache/etf_hist_{safe_code}_daily_1250.parquet')
+        df = pd.read_parquet(f'data/.cache/etf_hist_{safe_code}_daily_1250.parquet')
         all_hist[code] = df
     except:
         pass
