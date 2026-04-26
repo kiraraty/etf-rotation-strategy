@@ -42,3 +42,16 @@ Thumbs.db
 *.env
 credentials.json
 config.ini
+
+# Claude
+.claude/
+
+# Local state (paper trading, state files)
+cn/paper_trading/
+cn/stock_rotation/
+state/
+us/stock_rotation/
+us/state/
+us/docs/
+final_master_strategies/
+*.env.example
